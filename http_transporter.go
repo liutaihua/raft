@@ -28,6 +28,7 @@ type HTTPTransporter struct {
 	requestVotePath      string
 	snapshotPath         string
 	snapshotRecoveryPath string
+	commandPath		     string
 	httpClient           http.Client
 	Transport            *http.Transport
 }
@@ -47,6 +48,7 @@ func NewHTTPTransporter(prefix string, timeout time.Duration) *HTTPTransporter {
 	t := &HTTPTransporter{
 		DisableKeepAlives:    false,
 		prefix:               prefix,
+		commandPath:          "/db",
 		appendEntriesPath:    joinPath(prefix, "/appendEntries"),
 		requestVotePath:      joinPath(prefix, "/requestVote"),
 		snapshotPath:         joinPath(prefix, "/snapshot"),
@@ -72,6 +74,10 @@ func (t *HTTPTransporter) Prefix() string {
 // Retrieves the AppendEntries path.
 func (t *HTTPTransporter) AppendEntriesPath() string {
 	return t.appendEntriesPath
+}
+
+func (t *HTTPTransporter) CommandPath() string {
+	return t.commandPath
 }
 
 // Retrieves the RequestVote path.
@@ -110,6 +116,23 @@ func (t *HTTPTransporter) Install(server Server, mux HTTPMuxer) {
 //--------------------------------------
 // Outgoing
 //--------------------------------------
+
+func (t *HTTPTransporter) SendCommand(server Server, peer *Peer, req *WriteCommand) {
+//	var b bytes.Buffer
+
+	posturl := joinPath(peer.ConnectionString, t.CommandPath())
+	posturl = joinPath(posturl, req.Key)
+	warnln(server.Name(), "POST", posturl)
+	warnln("SendCommand: ", req.Key, req.Value, posturl)
+
+	httpResp, err := t.httpClient.PostForm(posturl, url.Values{req.Key: {req.Value}})
+	warnln(httpResp)
+	if httpResp == nil || err != nil {
+		traceln("transporter.ae.response.error:", err)
+		return
+	}
+	defer httpResp.Body.Close()
+}
 
 // Sends an AppendEntries RPC to a peer.
 func (t *HTTPTransporter) SendAppendEntriesRequest(server Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse {

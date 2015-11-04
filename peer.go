@@ -181,6 +181,13 @@ func (p *Peer) flush() {
 	}
 }
 
+func (p *Peer) sendCommand(req *WriteCommand) {
+	warnln("peer send command")
+	p.Lock()
+	defer p.Unlock()
+	p.server.Transporter().SendCommand(p.server, p, req)
+}
+
 //--------------------------------------
 // Append Entries
 //--------------------------------------

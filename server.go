@@ -602,10 +602,12 @@ func (s *server) loop() {
 		s.debugln("server.loop.run ", state)
 		switch state {
 		case Follower:
+			warnln("i am follower node")
 			s.followerLoop()
 		case Candidate:
 			s.candidateLoop()
 		case Leader:
+			warnln("i am leader node")
 			s.leaderLoop()
 		case Snapshotting:
 			s.snapshotLoop()
@@ -701,8 +703,20 @@ func (s *server) followerLoop() {
 				e.returnValue, update = s.processRequestVoteRequest(req)
 			case *SnapshotRequest:
 				e.returnValue = s.processSnapshotRequest(req)
+			case Command:
+				sss := fmt.Sprintf("%T", req)
+				rc := req.(*WriteCommand)
+				fmt.Println("followerloop got command: ", req.CommandName(), req, sss, rc)
+
+				lp := s.peers[s.leader]
+				lp.sendCommand(rc)
 			default:
+				fmt.Println("NotLeaderError not followerloop %T", req)
 				err = NotLeaderError
+				for _, peer := range s.peers {
+					fmt.Println("followerloop check peer %s", peer)
+				}
+				fmt.Println("guess leader peer", s.peers[s.leader])
 			}
 			// Callback to event.
 			e.c <- err
@@ -812,7 +826,7 @@ func (s *server) leaderLoop() {
 	logIndex, _ := s.log.lastInfo()
 
 	// Update the peers prevLogIndex to leader's lastLogIndex and start heartbeat.
-	s.debugln("leaderLoop.set.PrevIndex to ", logIndex)
+	warnln("leaderLoop.set.PrevIndex to ", logIndex)
 	for _, peer := range s.peers {
 		peer.setPrevLogIndex(logIndex)
 		peer.startHeartbeat()
@@ -843,9 +857,11 @@ func (s *server) leaderLoop() {
 		case e := <-s.c:
 			switch req := e.target.(type) {
 			case Command:
+				fmt.Println("leaderloop got Command %s", req)
 				s.processCommand(req, e)
 				continue
 			case *AppendEntriesRequest:
+				fmt.Println("leaderloop got AppendEntriesRequest")
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
 			case *AppendEntriesResponse:
 				s.processAppendEntriesResponse(req)
