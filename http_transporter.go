@@ -44,11 +44,11 @@ type HTTPMuxer interface {
 //------------------------------------------------------------------------------
 
 // Creates a new HTTP transporter with the given path prefix.
-func NewHTTPTransporter(prefix string, timeout time.Duration) *HTTPTransporter {
+func NewHTTPTransporter(prefix, dbPrefix string, timeout time.Duration) *HTTPTransporter {
 	t := &HTTPTransporter{
 		DisableKeepAlives:    false,
 		prefix:               prefix,
-		commandPath:          "/db",
+		commandPath:          dbPrefix,
 		appendEntriesPath:    joinPath(prefix, "/appendEntries"),
 		requestVotePath:      joinPath(prefix, "/requestVote"),
 		snapshotPath:         joinPath(prefix, "/snapshot"),
@@ -122,11 +122,22 @@ func (t *HTTPTransporter) SendCommand(server Server, peer *Peer, req *WriteComma
 
 	posturl := joinPath(peer.ConnectionString, t.CommandPath())
 	posturl = joinPath(posturl, req.Key)
-	warnln(server.Name(), "POST", posturl)
-	warnln("SendCommand: ", req.Key, req.Value, posturl)
+	debugln(server.Name(), "POST", posturl)
 
-	httpResp, err := t.httpClient.PostForm(posturl, url.Values{req.Key: {req.Value}})
-	warnln(httpResp)
+//	client := &http.Client{}
+	var b bytes.Buffer
+	b.Write([]byte(req.Value))
+	//	req_str := req.Key + "=" + req.Value
+	httpreq, err := http.NewRequest("POST", posturl, &b)
+	if err != nil {
+		// handle error
+	}
+
+	httpreq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+//	httpResp, err := client.Do(httpreq)
+//	httpResp, err := t.httpClient.PostForm(posturl, url.Values{req.Key: {req.Value}})
+	httpResp, err := t.httpClient.Do(httpreq)
+	debugln(httpResp)
 	if httpResp == nil || err != nil {
 		traceln("transporter.ae.response.error:", err)
 		return

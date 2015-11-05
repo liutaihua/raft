@@ -105,6 +105,7 @@ type Server interface {
 	LoadSnapshot() error
 	AddEventListener(string, EventListener)
 	FlushCommitIndex()
+	GetRec() <-chan interface {}
 }
 
 type server struct {
@@ -126,6 +127,7 @@ type server struct {
 
 	stopped           chan bool
 	c                 chan *ev
+	rec				  chan interface {}
 	electionTimeout   time.Duration
 	heartbeatInterval time.Duration
 
@@ -167,6 +169,7 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 	if name == "" {
 		return nil, errors.New("raft.Server: Name cannot be blank")
 	}
+	warnln("New raft server name:", name,"path:", path, "transporter:", transporter, "stateMachine:", stateMachine, "ctx:", ctx, "connectionString:", connectionString)
 	if transporter == nil {
 		panic("raft: Transporter required")
 	}
@@ -179,6 +182,7 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 		context:                 ctx,
 		state:                   Stopped,
 		peers:                   make(map[string]*Peer),
+		rec:					 make(chan interface {}),
 		log:                     newLog(),
 		c:                       make(chan *ev, 256),
 		electionTimeout:         DefaultElectionTimeout,
@@ -694,29 +698,25 @@ func (s *server) followerLoop() {
 				}
 			case *AppendEntriesRequest:
 				// If heartbeats get too close to the election timeout then send an event.
+//				warnln("new AppendEntriesRequest at follower loop", req.Entries)
 				elapsedTime := time.Now().Sub(since)
 				if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
 					s.DispatchEvent(newEvent(ElectionTimeoutThresholdEventType, elapsedTime, nil))
 				}
 				e.returnValue, update = s.processAppendEntriesRequest(req)
 			case *RequestVoteRequest:
+				warnln("new RequestVoteRequest at follower loop", req)
 				e.returnValue, update = s.processRequestVoteRequest(req)
 			case *SnapshotRequest:
+				warnln("new SnapshotRequest at follower loop", req)
 				e.returnValue = s.processSnapshotRequest(req)
 			case Command:
-				sss := fmt.Sprintf("%T", req)
 				rc := req.(*WriteCommand)
-				fmt.Println("followerloop got command: ", req.CommandName(), req, sss, rc)
-
 				lp := s.peers[s.leader]
 				lp.sendCommand(rc)
+				warnln("follower got command, forwarding to leader, current leader is ->", s.leader)
 			default:
-				fmt.Println("NotLeaderError not followerloop %T", req)
 				err = NotLeaderError
-				for _, peer := range s.peers {
-					fmt.Println("followerloop check peer %s", peer)
-				}
-				fmt.Println("guess leader peer", s.peers[s.leader])
 			}
 			// Callback to event.
 			e.c <- err
@@ -857,15 +857,16 @@ func (s *server) leaderLoop() {
 		case e := <-s.c:
 			switch req := e.target.(type) {
 			case Command:
-				fmt.Println("leaderloop got Command %s", req)
 				s.processCommand(req, e)
 				continue
 			case *AppendEntriesRequest:
-				fmt.Println("leaderloop got AppendEntriesRequest")
+//				warnln("new AppendEntriesRequest at leader loop---------------------------------------", req)
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
 			case *AppendEntriesResponse:
+//				warnln("new AppendEntriesResponse at leader loop", req)
 				s.processAppendEntriesResponse(req)
 			case *RequestVoteRequest:
+				warnln("new RequestVoteRequest at leader loop")
 				e.returnValue, _ = s.processRequestVoteRequest(req)
 			}
 
@@ -951,6 +952,19 @@ func (s *server) AppendEntries(req *AppendEntriesRequest) *AppendEntriesResponse
 	return resp
 }
 
+func (s *server) GetRec() <-chan interface {} {
+	return s.rec
+}
+
+func (s *server) sendOutSideServer(req *AppendEntriesRequest) {
+//	var b bytes.Buffer
+//	if _, err := req.Decode(&b); err != nil {
+//		warnln("sendOutSideServer err", err, req, string(req.Entries[0].GetCommand()))
+//		return
+//	}
+	s.rec <- string(req.Entries[0].GetCommand())
+}
+
 // Processes the "append entries" request.
 func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*AppendEntriesResponse, bool) {
 	s.traceln("server.ae.process")
@@ -979,24 +993,27 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 
 	// Reject if log doesn't contain a matching previous entry.
 	if err := s.log.truncate(req.PrevLogIndex, req.PrevLogTerm); err != nil {
-		s.debugln("server.ae.truncate.error: ", err)
+		warnln("server.ae.truncate.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
 
 	// Append entries to the log.
 	if err := s.log.appendEntries(req.Entries); err != nil {
-		s.debugln("server.ae.append.error: ", err)
+		warnln("server.ae.append.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
 
 	// Commit up to the commit index.
 	if err := s.log.setCommitIndex(req.CommitIndex); err != nil {
-		s.debugln("server.ae.commit.error: ", err)
+		warnln("server.ae.commit.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
 
 	// once the server appended and committed all the log entries from the leader
 
+	if len(req.Entries) > 0 {
+		go s.sendOutSideServer(req)
+	}
 	return newAppendEntriesResponse(s.currentTerm, true, s.log.currentIndex(), s.log.CommitIndex()), true
 }
 
