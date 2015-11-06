@@ -182,7 +182,7 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 		context:                 ctx,
 		state:                   Stopped,
 		peers:                   make(map[string]*Peer),
-		rec:					 make(chan interface {}),
+		rec:					 make(chan interface {}, 256),
 		log:                     newLog(),
 		c:                       make(chan *ev, 256),
 		electionTimeout:         DefaultElectionTimeout,
@@ -698,7 +698,6 @@ func (s *server) followerLoop() {
 				}
 			case *AppendEntriesRequest:
 				// If heartbeats get too close to the election timeout then send an event.
-//				warnln("new AppendEntriesRequest at follower loop", req.Entries)
 				elapsedTime := time.Now().Sub(since)
 				if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
 					s.DispatchEvent(newEvent(ElectionTimeoutThresholdEventType, elapsedTime, nil))
@@ -956,13 +955,25 @@ func (s *server) GetRec() <-chan interface {} {
 	return s.rec
 }
 
-func (s *server) sendOutSideServer(req *AppendEntriesRequest) {
+func (s *server) sendOutSideServer(data interface {}) {
 //	var b bytes.Buffer
 //	if _, err := req.Decode(&b); err != nil {
 //		warnln("sendOutSideServer err", err, req, string(req.Entries[0].GetCommand()))
 //		return
 //	}
-	s.rec <- string(req.Entries[0].GetCommand())
+	switch data.(type){
+	case AppendEntriesRequest:
+		res := string(data.(AppendEntriesRequest).Entries[0].GetCommand())
+		if res != "" {
+			s.rec <- res
+		}
+	case *LogEntry:
+//		l := data.(*LogEntry)
+		res := string(data.(*LogEntry).Command())
+		if res != "" {
+			s.rec <- res
+		}
+	}
 }
 
 // Processes the "append entries" request.
@@ -1012,7 +1023,7 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 	// once the server appended and committed all the log entries from the leader
 
 	if len(req.Entries) > 0 {
-		go s.sendOutSideServer(req)
+		go s.sendOutSideServer(*req)
 	}
 	return newAppendEntriesResponse(s.currentTerm, true, s.log.currentIndex(), s.log.CommitIndex()), true
 }
@@ -1060,6 +1071,12 @@ func (s *server) processAppendEntriesResponse(resp *AppendEntriesResponse) {
 		s.log.sync()
 		s.log.setCommitIndex(commitIndex)
 		s.debugln("commit index ", commitIndex)
+	}
+
+	if resp.Index() > committedIndex {
+		entery := s.log.getEntry(resp.Index())
+//		fmt.Println("resp entery", resp.Index(), string(entery.pb.String()))
+		go s.sendOutSideServer(entery)
 	}
 }
 
