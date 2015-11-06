@@ -122,7 +122,7 @@ func (t *HTTPTransporter) SendCommand(server Server, peer *Peer, req *WriteComma
 
 	posturl := joinPath(peer.ConnectionString, t.CommandPath())
 	posturl = joinPath(posturl, req.Key)
-	debugln(server.Name(), "POST", posturl)
+	debugln("transporter send command", req, posturl)
 
 //	client := &http.Client{}
 	var b bytes.Buffer
@@ -130,16 +130,15 @@ func (t *HTTPTransporter) SendCommand(server Server, peer *Peer, req *WriteComma
 	//	req_str := req.Key + "=" + req.Value
 	httpreq, err := http.NewRequest("POST", posturl, &b)
 	if err != nil {
+		fmt.Println("send command err", err.Error())
 		// handle error
 	}
 
 	httpreq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-//	httpResp, err := client.Do(httpreq)
-//	httpResp, err := t.httpClient.PostForm(posturl, url.Values{req.Key: {req.Value}})
 	httpResp, err := t.httpClient.Do(httpreq)
 	debugln(httpResp)
 	if httpResp == nil || err != nil {
-		traceln("transporter.ae.response.error:", err)
+		warnln("transporter.ae.response.error:", err)
 		return
 	}
 	defer httpResp.Body.Close()

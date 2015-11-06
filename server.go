@@ -712,6 +712,10 @@ func (s *server) followerLoop() {
 			case Command:
 				rc := req.(*WriteCommand)
 				lp := s.peers[s.leader]
+				if lp == nil {
+					warnln("-------------not found leader peer for forwarding --------------")
+					break
+				}
 				lp.sendCommand(rc)
 				warnln("follower got command, forwarding to leader, current leader is ->", s.leader)
 			default:
@@ -804,6 +808,7 @@ func (s *server) candidateLoop() {
 			var err error
 			switch req := e.target.(type) {
 			case Command:
+				warnln("---------- rec a command when candidateLoop -----------------")
 				err = NotLeaderError
 			case *AppendEntriesRequest:
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
@@ -888,6 +893,7 @@ func (s *server) snapshotLoop() {
 		case e := <-s.c:
 			switch req := e.target.(type) {
 			case Command:
+				warnln("---------- rec a command when snapshotLoop -----------------")
 				err = NotLeaderError
 			case *AppendEntriesRequest:
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
@@ -915,7 +921,7 @@ func (s *server) Do(command Command) (interface{}, error) {
 
 // Processes a command.
 func (s *server) processCommand(command Command, e *ev) {
-	s.debugln("server.command.process")
+	debugln("server.command.process")
 
 	// Create an entry for the command in the log.
 	entry, err := s.log.createEntry(s.currentTerm, command, e)
